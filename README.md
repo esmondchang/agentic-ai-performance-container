@@ -18,82 +18,23 @@ This tutorial teaches you four fundamental patterns in agentic AI:
 - **10GB disk space** for models
 - **macOS, Linux, or Windows** (with WSL2)
 
-## 🚀 Quick Start (5 minutes)
-
-### Step 1: Clone the Repository
-
-```bash
-git clone https://github.com/yourusername/agentic-ai-tutorial.git
-cd agentic-ai-tutorial
-```
-
-### Step 2: Create Virtual Environment
-
-```bash
-python3 -m venv ai-agents-env
-source ai-agents-env/bin/activate  # On Windows: ai-agents-env\Scripts\activate
-```
-
-### Step 3: Install Dependencies
-
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### Step 4: Install and Start Ollama
-
-**macOS:**
-```bash
-brew install ollama
-ollama serve  # Run in a separate terminal
-```
-
-**Linux:**
-```bash
-curl -fsSL https://ollama.ai/install.sh | sh
-ollama serve
-```
-
-**Windows:**
-Download from [https://ollama.ai/download](https://ollama.ai/download)
-
-### Step 5: Pull Required Models
-
-In a new terminal:
-```bash
-ollama pull llama3.2        # Main reasoning model (3GB)
-ollama pull nomic-embed-text # Embedding model for RAG (274MB)
-```
-
-### Step 6: Test Your Setup
-
-```bash
-python test_ollama.py
-```
-
-You should see:
-```
-✅ Ollama package imported
-✅ Found 2 models
-✅ Generation test passed
-✅ All tests passed!
-```
-
-### Step 7: Run the Application
-
-```bash
-python run.py
-```
-
-Open your browser to: **http://localhost:8501**
 
 ## 🐳 Container Quick Start
 
-Use this path when you want the app and Ollama to run in containers and you
-want an easy way to trigger multiple concurrent test users.
+Use this path when you want the app and Ollama to run entirely in containers,
+with an easy way to trigger multiple concurrent test users.
 
-### 1. Configure defaults
+Container setup requires Docker Desktop. You do not need a local Python virtual
+environment and you do not need to install Ollama on your machine.
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/esmondchang/agentic-ai-performance-container.git
+cd agentic-ai-performance-container
+```
+
+### 2. Configure defaults
 
 ```bash
 cp .env.example .env
@@ -101,17 +42,18 @@ cp .env.example .env
 
 Edit `.env` if you want different models, ports, request counts, or concurrency.
 
-### 2. Start Ollama and pull models
+### 3. Start Ollama and download models
 
 ```bash
 docker compose up -d ollama
 docker compose --profile setup run --rm pull-models
 ```
 
-The models are stored in the `ollama-data` Docker volume, so you only need to
-pull them again when you change model names or remove the volume.
+This starts Ollama in a container and downloads the required models into the
+Docker `ollama-data` volume. You only need to download them again when you
+change model names or remove the volume.
 
-### 3. Run the Streamlit app
+### 4. Run the Streamlit app
 
 ```bash
 docker compose up --build app
@@ -119,7 +61,40 @@ docker compose up --build app
 
 Open your browser to: **http://localhost:8501**
 
-### 4. Trigger concurrent workflow users
+### 5. Rebuild after code changes
+
+If you change Python code, rebuild the app image before testing again:
+
+```bash
+docker compose down
+docker compose up -d ollama
+docker compose --profile setup run --rm pull-models
+docker compose up --build app
+```
+
+### 6. Health checks
+
+Check that the containers are running:
+
+```bash
+docker compose ps
+```
+
+Check Ollama from your host machine:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+Check Ollama from inside the app container network:
+
+```bash
+docker compose run --rm app python -c "import requests; print(requests.get('http://ollama:11434/api/tags').json())"
+```
+
+If the inside-container check works, the app can reach Ollama.
+
+### 7. Trigger concurrent workflow users
 
 ```bash
 REQUESTS=20 CONCURRENCY=5 docker compose --profile perf run --rm workflow-load-test
@@ -128,7 +103,7 @@ REQUESTS=20 CONCURRENCY=5 docker compose --profile perf run --rm workflow-load-t
 This runs `FinancialAgentWorkflow.analyze()` concurrently inside a container and
 writes results to `results/workflow_performance_results.json`.
 
-### 5. Trigger concurrent direct Ollama users
+### 8. Trigger concurrent direct Ollama users
 
 ```bash
 REQUESTS=20 CONCURRENCY=5 docker compose --profile perf run --rm ollama-load-test
@@ -145,10 +120,34 @@ remove the fixed `APP_PORT:8501` host-port binding from the `app` service. The
 default Compose file keeps one browser-facing app container mapped to
 `localhost:8501`.
 
+### Troubleshooting: `httpx.ConnectError: [Errno 111] Connection refused`
+
+This usually means the app container cannot reach Ollama or the app image was
+not rebuilt after code changes.
+
+First rebuild and restart:
+
+```bash
+docker compose down
+docker compose up -d ollama
+docker compose --profile setup run --rm pull-models
+docker compose up --build app
+```
+
+Then verify the app can reach Ollama:
+
+```bash
+docker compose run --rm app python -c "import requests; print(requests.get('http://ollama:11434/api/tags').json())"
+```
+
+Inside Docker, the app must use `OLLAMA_BASE_URL=http://ollama:11434`. Do not
+use `localhost:11434` from app code running in the container, because
+`localhost` would point at the app container itself.
+
 ## 📁 Project Structure
 
 ```
-agentic-ai-tutorial/
+agentic-ai-performance-container/
 ├── src/
 │   ├── config.py           # Ollama configuration
 │   ├── react_agent.py      # ReAct reasoning implementation
