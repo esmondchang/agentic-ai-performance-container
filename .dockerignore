@@ -1,0 +1,14 @@
+.git
+.env
+ai-agents-env
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+data/traces
+logs
+*.json
+!msft_perf.json
+!performance_results.json
+!ollama_performance_results.json
