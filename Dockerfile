@@ -20,7 +20,7 @@ RUN pip install --upgrade pip \
 COPY src ./src
 COPY run.py test_ollama.py ./
 COPY tests ./tests
-COPY data ./data
+RUN mkdir -p /app/data
 
 EXPOSE 8501
 
