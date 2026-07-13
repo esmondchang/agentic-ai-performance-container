@@ -112,6 +112,42 @@ REQUESTS=20 CONCURRENCY=5 docker compose --profile perf run --rm ollama-load-tes
 This measures concurrent calls to Ollama `/api/generate` and writes results to
 `results/ollama_performance_results.json`.
 
+### Faster macOS option: container app with host Ollama
+
+On macOS, Ollama running directly on the host can use Apple Metal acceleration,
+while Ollama inside Docker runs in a Linux VM and can be much slower. If raw
+Ollama tests are much slower in Docker, use this mode.
+
+Start Ollama on your host:
+
+```bash
+ollama serve
+ollama pull llama3.2
+ollama pull qwen2.5
+ollama pull nomic-embed-text
+```
+
+Run the containerized app against host Ollama:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build app
+```
+
+Run the workflow load test against host Ollama:
+
+```bash
+REQUESTS=20 CONCURRENCY=5 docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml --profile perf run --rm workflow-load-test
+```
+
+Run the raw Ollama load test against host Ollama:
+
+```bash
+REQUESTS=20 CONCURRENCY=5 docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml --profile perf run --rm ollama-load-test
+```
+
+In this mode, the app and tests still run in containers, but model inference
+uses `http://host.docker.internal:11434` so it reaches your host Ollama service.
+
 ### Optional: scale app containers behind a proxy
 
 Streamlit itself can serve multiple sessions from one container. If you want
@@ -140,9 +176,10 @@ Then verify the app can reach Ollama:
 docker compose run --rm app python -c "import requests; print(requests.get('http://ollama:11434/api/tags').json())"
 ```
 
-Inside Docker, the app must use `OLLAMA_BASE_URL=http://ollama:11434`. Do not
-use `localhost:11434` from app code running in the container, because
-`localhost` would point at the app container itself.
+Inside Docker, do not use `localhost:11434` from app code running in the
+container, because `localhost` would point at the app container itself. Use
+`http://ollama:11434` for the fully containerized setup, or
+`http://host.docker.internal:11434` when using the host-Ollama override.
 
 ## 📁 Project Structure
 
@@ -162,6 +199,7 @@ agentic-ai-performance-container/
 ├── requirements.txt      # Python dependencies
 ├── Dockerfile            # Container image for the Streamlit app and tests
 ├── docker-compose.yml    # App, Ollama, model setup, and performance profiles
+├── docker-compose.host-ollama.yml # Override for using host Ollama from containers
 ├── run.py               # Application launcher
 ├── test_ollama.py       # Ollama connection test
 └── README.md           # This file
