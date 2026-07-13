@@ -1,0 +1,6 @@
+services:
+  ollama:
+    gpus: all
+    environment:
+      CUDA_VISIBLE_DEVICES: "0"
+      OLLAMA_LLM_LIBRARY: ""
