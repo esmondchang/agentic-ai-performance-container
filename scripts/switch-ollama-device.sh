@@ -85,11 +85,33 @@ restart_service() {
   fi
 }
 
+wait_for_api() {
+  local attempt
+
+  if ! command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  for attempt in {1..30}; do
+    if curl --silent --fail --max-time 1 \
+      http://127.0.0.1:11434/api/version >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "Ollama restarted but its API did not become ready within 30 seconds." >&2
+  systemctl status "$SERVICE" --no-pager >&2 || true
+  echo "Check logs with: sudo journalctl -u ollama -n 100 --no-pager" >&2
+  exit 1
+}
+
 case "${1:-}" in
   cpu)
     require_root "$@"
     write_cpu_drop_in
     restart_service
+    wait_for_api
     echo "Ollama switched to CPU-only mode."
     show_status
     ;;
@@ -97,6 +119,7 @@ case "${1:-}" in
     require_root "$@"
     write_gpu_drop_in
     restart_service
+    wait_for_api
     echo "Ollama switched to GPU auto-detect mode."
     show_status
     ;;
