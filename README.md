@@ -19,167 +19,169 @@ This tutorial teaches you four fundamental patterns in agentic AI:
 - **macOS, Linux, or Windows** (with WSL2)
 
 
-## 🐳 Container Quick Start
+## 🐳 Quick Start: Host Ollama + Containerized App
 
-Use this path when you want the app and Ollama to run entirely in containers,
-with an easy way to trigger multiple concurrent test users.
+This is the recommended deployment for this repository. Ollama runs directly
+on the host with `ollama serve`; Docker runs only the Streamlit app and optional
+load-test clients. The host owns the models, CPU/GPU access, and port `11434`.
+This Compose file uses host networking and is intended for Linux hosts.
 
-Container setup requires Docker Desktop. You do not need a local Python virtual
-environment and you do not need to install Ollama on your machine.
+Do not combine `docker-compose.local-ollama.yml` with `docker-compose.yml`. The
+host file is standalone and intentionally contains no Ollama service.
 
-### 1. Clone the repository
+### 1. Clone and configure the repository
 
 ```bash
 git clone https://github.com/esmondchang/agentic-ai-performance-container.git
 cd agentic-ai-performance-container
-```
-
-### 2. Configure defaults
-
-```bash
 cp .env.example .env
 ```
 
-Edit `.env` if you want different models, ports, request counts, or concurrency.
+### 2. Install and start Ollama on the host
 
-### 3. Start Ollama and download models
-
-```bash
-docker compose up -d ollama
-docker compose --profile setup run --rm pull-models
-```
-
-This starts Ollama in a container and downloads the required models into the
-Docker `ollama-data` volume. You only need to download them again when you
-change model names or remove the volume.
-
-### 4. Run the Streamlit app
-
-```bash
-docker compose up --build app
-```
-
-Open your browser to: **http://localhost:8501**
-
-### 5. Rebuild after code changes
-
-If you change Python code, rebuild the app image before testing again:
-
-```bash
-docker compose down
-docker compose up -d ollama
-docker compose --profile setup run --rm pull-models
-docker compose up --build app
-```
-
-### 6. Health checks
-
-Check that the containers are running:
-
-```bash
-docker compose ps
-```
-
-Check Ollama from your host machine:
-
-```bash
-curl http://localhost:11434/api/tags
-```
-
-Check Ollama from inside the app container network:
-
-```bash
-docker compose run --rm app python -c "import requests; print(requests.get('http://ollama:11434/api/tags').json())"
-```
-
-If the inside-container check works, the app can reach Ollama.
-
-### 7. Trigger concurrent workflow users
-
-```bash
-REQUESTS=20 CONCURRENCY=5 docker compose --profile perf run --rm workflow-load-test
-```
-
-This runs `FinancialAgentWorkflow.analyze()` concurrently inside a container and
-writes results to `results/workflow_performance_results.json`.
-
-### 8. Trigger concurrent direct Ollama users
-
-```bash
-REQUESTS=20 CONCURRENCY=5 docker compose --profile perf run --rm ollama-load-test
-```
-
-This measures concurrent calls to Ollama `/api/generate` and writes results to
-`results/ollama_performance_results.json`.
-
-### Faster macOS option: container app with host Ollama
-
-On macOS, Ollama running directly on the host can use Apple Metal acceleration,
-while Ollama inside Docker runs in a Linux VM and can be much slower. If raw
-Ollama tests are much slower in Docker, use this mode.
-
-Start Ollama on your host:
+Install Ollama using the instructions for your operating system, then start the
+host service:
 
 ```bash
 ollama serve
-ollama pull llama3.2
-ollama pull qwen2.5
-ollama pull nomic-embed-text
 ```
 
-Run the containerized app against host Ollama:
+If Ollama is managed by systemd, verify it instead:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up --build app
+sudo systemctl status ollama
 ```
 
-Run the workflow load test against host Ollama:
+### 3. Pull models on the host
 
 ```bash
-REQUESTS=20 CONCURRENCY=5 docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml --profile perf run --rm workflow-load-test
+ollama pull llama3.2:latest
+ollama pull qwen2.5:latest
+ollama pull nomic-embed-text:latest
+ollama list
 ```
 
-Run the raw Ollama load test against host Ollama:
+There is no Compose `pull-models` step in this deployment because the Ollama
+server and model store are outside Docker.
+
+### 4. Verify host Ollama
+
+Confirm Ollama works locally:
 
 ```bash
-REQUESTS=20 CONCURRENCY=5 docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml --profile perf run --rm ollama-load-test
+curl http://127.0.0.1:11434/api/tags
+sudo ss -ltnp 'sport = :11434'
 ```
 
-In this mode, the app and tests still run in containers, but model inference
-uses `http://host.docker.internal:11434` so it reaches your host Ollama service.
+`docker-compose.local-ollama.yml` uses Linux host networking, so the app
+container reaches Ollama at `http://127.0.0.1:11434`. Ollama can remain bound
+to loopback; it does not need to be exposed on `0.0.0.0`.
 
-### Optional: scale app containers behind a proxy
-
-Streamlit itself can serve multiple sessions from one container. If you want
-multiple app replicas, put them behind a reverse proxy or load balancer and
-remove the fixed `APP_PORT:8501` host-port binding from the `app` service. The
-default Compose file keeps one browser-facing app container mapped to
-`localhost:8501`.
-
-### Troubleshooting: `httpx.ConnectError: [Errno 111] Connection refused`
-
-This usually means the app container cannot reach Ollama or the app image was
-not rebuilt after code changes.
-
-First rebuild and restart:
+### 5. Verify the standalone Compose file
 
 ```bash
-docker compose down
-docker compose up -d ollama
-docker compose --profile setup run --rm pull-models
-docker compose up --build app
+docker compose -f docker-compose.local-ollama.yml config --services
 ```
 
-Then verify the app can reach Ollama:
+Expected services:
+
+```text
+app
+```
+
+There should be no `ollama` service.
+
+Test connectivity from the app image:
 
 ```bash
-docker compose run --rm app python -c "import requests; print(requests.get('http://ollama:11434/api/tags').json())"
+docker compose -f docker-compose.local-ollama.yml run --rm app \
+  python -c "import requests; r=requests.get('http://127.0.0.1:11434/api/tags'); print(r.status_code, r.text[:500])"
 ```
 
-Inside Docker, do not use `localhost:11434` from app code running in the
-container, because `localhost` would point at the app container itself. Use
-`http://ollama:11434` for the fully containerized setup, or
-`http://host.docker.internal:11434` when using the host-Ollama override.
+A `200` response confirms that Docker can reach the host Ollama server.
+
+### 6. Build and run the app
+
+```bash
+docker compose -f docker-compose.local-ollama.yml up --build app
+```
+
+Open **http://localhost:8501**. To run in the background:
+
+```bash
+docker compose -f docker-compose.local-ollama.yml up -d --build app
+docker compose -f docker-compose.local-ollama.yml logs -f app
+```
+
+After Python code changes, run the same `up --build app` command. Restarting
+Ollama or pulling models again is unnecessary.
+
+### 7. Run concurrent workflow tests
+
+```bash
+docker compose -f docker-compose.local-ollama.yml run --rm \
+  -v "$PWD/results:/app/results" app \
+  python tests/performance_test1.py \
+  --requests 20 --concurrency 5 --warmup 2 --ticker AAPL \
+  --output /app/results/workflow_performance_results.json
+```
+
+Results are written to `results/workflow_performance_results.json`.
+
+Test direct Ollama concurrency:
+
+```bash
+docker compose -f docker-compose.local-ollama.yml run --rm \
+  -v "$PWD/results:/app/results" app \
+  python tests/ollama_model_performance.py \
+  --base-url http://127.0.0.1:11434 --model llama3.2:latest \
+  --requests 20 --concurrency 5 --warmup 2 \
+  --output /app/results/ollama_performance_results.json
+```
+
+Results are written to `results/ollama_performance_results.json`.
+
+### What `-f` means
+
+`-f` means `--file`; it selects the Compose file to use:
+
+```bash
+docker compose -f docker-compose.local-ollama.yml up --build app
+```
+
+Always include it for this deployment. Running `docker compose up` without
+`-f` selects `docker-compose.yml`, which defines a containerized Ollama service
+and can conflict with host Ollama on port `11434`.
+
+### Multi-user and multi-tenant testing
+
+One Streamlit app container can serve multiple browser sessions. All users
+share the host Ollama server, whose `OLLAMA_NUM_PARALLEL` setting controls how
+many inference requests execute concurrently; extra requests wait in its queue.
+
+Multiple app replicas can also share host Ollama. Because this file uses host
+networking, each replica needs a unique Streamlit listen port or a reverse
+proxy. For true tenant isolation, use a separate FAISS vector-store directory
+or volume per tenant. The default shared `/app/data/vector_store` path is
+appropriate for a demo, not isolated tenant data.
+
+### Troubleshooting
+
+If the app reports `Connection refused`:
+
+```bash
+curl http://127.0.0.1:11434/api/tags
+sudo ss -ltnp 'sport = :11434'
+docker compose -f docker-compose.local-ollama.yml run --rm app \
+  python -c "import requests; print(requests.get('http://127.0.0.1:11434/api/tags').status_code)"
+```
+
+If Docker reports that host port `11434` is already in use, the wrong Compose
+file was selected. Stop that attempt and use only:
+
+```bash
+docker compose -f docker-compose.local-ollama.yml up --build app
+```
 
 ## 📁 Project Structure
 
@@ -199,7 +201,8 @@ agentic-ai-performance-container/
 ├── requirements.txt      # Python dependencies
 ├── Dockerfile            # Container image for the Streamlit app and tests
 ├── docker-compose.yml    # App, Ollama, model setup, and performance profiles
-├── docker-compose.host-ollama.yml # Override for using host Ollama from containers
+├── docker-compose.gpu.yml # NVIDIA GPU override for the Ollama service
+├── docker-compose.local-ollama.yml # Standalone app stack using local Ollama
 ├── run.py               # Application launcher
 ├── test_ollama.py       # Ollama connection test
 └── README.md           # This file
