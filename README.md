@@ -128,6 +128,23 @@ docker compose -f docker-compose.local-ollama.yml run --rm \
 
 Results are written to `results/workflow_performance_results.json`.
 
+Run a tenant-isolated concurrency test:
+
+```bash
+docker compose -f docker-compose.local-ollama.yml run --rm \
+  -v "$PWD/results:/app/results" app \
+  python tests/multitenant_test.py \
+  --tenants 3 --users-per-tenant 2 --requests-per-user 2 \
+  --ticker AAPL \
+  --output /app/results/multitenant_results.json
+```
+
+This example starts six concurrent simulated users and runs twelve complete
+LangGraph analyses. Users belonging to a tenant share that tenant's FAISS
+store, while every tenant receives a separate directory. The JSON report
+includes latency, throughput, failures, tenant paths, and an isolation audit.
+Add `--keep-data` to retain the generated tenant stores after the audit.
+
 Test direct Ollama concurrency:
 
 ```bash

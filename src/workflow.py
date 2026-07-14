@@ -67,7 +67,7 @@ class AgentState(TypedDict):
 class WorkflowNodes:
     """Collection of workflow nodes demonstrating different patterns"""
 
-    def __init__(self, fast_mode: bool = False):
+    def __init__(self, fast_mode: bool = False, persist_directory: Optional[str] = None):
         """Initialize components"""
         try:
             from src.config import config
@@ -84,7 +84,9 @@ class WorkflowNodes:
         )
 
         # Initialize RAG engine
-        self.rag_engine = None if fast_mode else RAGEngine()
+        self.rag_engine = None if fast_mode else RAGEngine(
+            persist_directory=persist_directory
+        )
 
         # Initialize ReAct agent
         self.react_agent = None if fast_mode else ReActAgent()
@@ -426,17 +428,23 @@ class FinancialAgentWorkflow:
         "generate_report": "Generate Report",
     }
 
-    def __init__(self, fast_mode: bool = False):
+    def __init__(self, fast_mode: bool = False, persist_directory: Optional[str] = None):
         """Initialize the workflow"""
         self.fast_mode = fast_mode
         try:
-            self.nodes = WorkflowNodes(fast_mode=fast_mode)
+            self.nodes = WorkflowNodes(
+                fast_mode=fast_mode,
+                persist_directory=persist_directory,
+            )
             self.graph = self._build_graph()
             self.app = self.graph.compile()
         except Exception as e:
             print(f"Warning: Workflow initialization error: {e}")
             # Set defaults if initialization fails
-            self.nodes = WorkflowNodes(fast_mode=fast_mode)
+            self.nodes = WorkflowNodes(
+                fast_mode=fast_mode,
+                persist_directory=persist_directory,
+            )
             self.app = None
 
     def _timed_node(self, node_name: str, node_func):
