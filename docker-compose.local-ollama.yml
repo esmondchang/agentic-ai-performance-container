@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    image: agentic-ai-tutorial:local
+    network_mode: host
+    environment:
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+      REASONING_MODEL: ${REASONING_MODEL:-llama3.2:latest}
+      ANALYSIS_MODEL: ${ANALYSIS_MODEL:-qwen2.5:latest}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text:latest}
+      VECTOR_STORE_TYPE: ${VECTOR_STORE_TYPE:-faiss}
+      PERSIST_DIRECTORY: /app/data/vector_store
+    volumes:
+      - app-data:/app/data
+
+volumes:
+  app-data:
