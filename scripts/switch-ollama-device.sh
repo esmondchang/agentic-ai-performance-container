@@ -7,9 +7,10 @@ DROP_IN_FILE="${DROP_IN_DIR}/zz-device-mode.conf"
 AMX_BACKEND="/usr/local/lib/ollama/libggml-cpu-sapphirerapids.so"
 
 usage() {
-  echo "Usage: $0 {cpu|gpu|status}"
+  echo "Usage: $0 {cpu|gpu [device-list]|status}"
   echo "  cpu     Hide NVIDIA, Vulkan, and ROCm GPUs from Ollama."
-  echo "  gpu     Allow Ollama to auto-detect and use the NVIDIA GPU."
+  echo "  gpu     Allow Ollama to auto-detect NVIDIA GPUs."
+  echo "  gpu 0,1 Restrict Ollama to the listed NVIDIA GPU indices."
   echo "  status  Show the active mode, service environment, and loaded models."
 }
 
@@ -20,11 +21,14 @@ require_root() {
 }
 
 show_status() {
-  local environment mode
+  local environment mode gpu_devices
   environment="$(systemctl show "$SERVICE" --property=Environment --value)"
 
   if [[ "$environment" == *"CUDA_VISIBLE_DEVICES=-1"* ]]; then
     mode="CPU only"
+  elif [[ "$environment" =~ CUDA_VISIBLE_DEVICES=([^[:space:]]+) ]]; then
+    gpu_devices="${BASH_REMATCH[1]//\"/}"
+    mode="GPU devices ${gpu_devices}"
   else
     mode="GPU auto-detect"
   fi
@@ -62,6 +66,9 @@ EOF
 }
 
 write_gpu_drop_in() {
+  local devices="${1:-auto}" available device
+  local -a requested_devices
+
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "Error: nvidia-smi is unavailable; NVIDIA driver is not ready." >&2
     exit 1
@@ -69,9 +76,36 @@ write_gpu_drop_in() {
   nvidia-smi -L >/dev/null
 
   install -d -m 0755 "$DROP_IN_DIR"
-  tee "$DROP_IN_FILE" >/dev/null <<'EOF'
+
+  if [[ "$devices" == "auto" ]]; then
+    tee "$DROP_IN_FILE" >/dev/null <<'EOF'
 [Service]
 UnsetEnvironment=CUDA_VISIBLE_DEVICES GGML_VK_VISIBLE_DEVICES ROCR_VISIBLE_DEVICES
+EOF
+    return
+  fi
+
+  if [[ ! "$devices" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    echo "Error: GPU device list must contain comma-separated indices, for example 0,1." >&2
+    exit 2
+  fi
+
+  available="$(nvidia-smi --query-gpu=index --format=csv,noheader,nounits)"
+  IFS=',' read -r -a requested_devices <<< "$devices"
+  for device in "${requested_devices[@]}"; do
+    if ! grep -Fxq "$device" <<< "$available"; then
+      echo "Error: NVIDIA GPU index $device is unavailable." >&2
+      echo "Available GPU indices:" >&2
+      echo "$available" >&2
+      exit 1
+    fi
+  done
+
+  tee "$DROP_IN_FILE" >/dev/null <<EOF
+[Service]
+Environment="CUDA_VISIBLE_DEVICES=${devices}"
+Environment="GGML_VK_VISIBLE_DEVICES=-1"
+Environment="ROCR_VISIBLE_DEVICES=-1"
 EOF
 }
 
@@ -117,10 +151,19 @@ case "${1:-}" in
     ;;
   gpu)
     require_root "$@"
-    write_gpu_drop_in
+    if [[ -n "${3:-}" ]]; then
+      usage
+      exit 2
+    fi
+    gpu_devices="${2:-auto}"
+    write_gpu_drop_in "$gpu_devices"
     restart_service
     wait_for_api
-    echo "Ollama switched to GPU auto-detect mode."
+    if [[ "$gpu_devices" == "auto" ]]; then
+      echo "Ollama switched to GPU auto-detect mode."
+    else
+      echo "Ollama restricted to NVIDIA GPU devices: $gpu_devices"
+    fi
     show_status
     ;;
   status)
