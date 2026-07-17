@@ -11,6 +11,8 @@ usage() {
   echo "  cpu     Hide NVIDIA, Vulkan, and ROCm GPUs from Ollama."
   echo "  gpu     Allow Ollama to auto-detect NVIDIA GPUs."
   echo "  gpu 0,1 Restrict Ollama to the listed NVIDIA GPU indices."
+  echo "            Multiple indices also enable model spreading and one parallel"
+  echo "            inference slot per selected GPU."
   echo "  status  Show the active mode, service environment, and loaded models."
 }
 
@@ -66,7 +68,7 @@ EOF
 }
 
 write_gpu_drop_in() {
-  local devices="${1:-auto}" available device
+  local devices="${1:-auto}" available device device_count
   local -a requested_devices
 
   if ! command -v nvidia-smi >/dev/null 2>&1; then
@@ -101,12 +103,26 @@ EOF
     fi
   done
 
-  tee "$DROP_IN_FILE" >/dev/null <<EOF
+  device_count="${#requested_devices[@]}"
+  if (( device_count > 1 )); then
+    tee "$DROP_IN_FILE" >/dev/null <<EOF
 [Service]
 Environment="CUDA_VISIBLE_DEVICES=${devices}"
 Environment="GGML_VK_VISIBLE_DEVICES=-1"
 Environment="ROCR_VISIBLE_DEVICES=-1"
+Environment="OLLAMA_SCHED_SPREAD=1"
+Environment="OLLAMA_NUM_PARALLEL=${device_count}"
+Environment="OLLAMA_MAX_LOADED_MODELS=${device_count}"
 EOF
+  else
+    tee "$DROP_IN_FILE" >/dev/null <<EOF
+[Service]
+Environment="CUDA_VISIBLE_DEVICES=${devices}"
+Environment="GGML_VK_VISIBLE_DEVICES=-1"
+Environment="ROCR_VISIBLE_DEVICES=-1"
+Environment="OLLAMA_SCHED_SPREAD=0"
+EOF
+  fi
 }
 
 restart_service() {
@@ -163,6 +179,9 @@ case "${1:-}" in
       echo "Ollama switched to GPU auto-detect mode."
     else
       echo "Ollama restricted to NVIDIA GPU devices: $gpu_devices"
+      if [[ "$gpu_devices" == *,* ]]; then
+        echo "Multi-GPU spreading and parallel inference enabled."
+      fi
     fi
     show_status
     ;;

@@ -158,6 +158,47 @@ docker compose -f docker-compose.local-ollama.yml run --rm \
 
 Results are written to `results/ollama_performance_results.json`.
 
+### Per-task CPU and GPU report
+
+Rebuild the app after changing the workflow instrumentation:
+
+```bash
+docker compose -f docker-compose.local-ollama.yml build app
+```
+
+Run the resource monitor on the Linux host. It launches the test, samples the
+host and GPUs, and correlates samples with each LangGraph node window:
+
+```bash
+python3 tests/task_resource_monitor.py \
+  --trace-file "$PWD/results/task-events.jsonl" \
+  --output "$PWD/results/task-resources.json" \
+  --gpu-devices 0,1 \
+  --interval 0.25 \
+  -- docker compose -f docker-compose.local-ollama.yml run --rm \
+    -e RESOURCE_TRACE_FILE=/app/results/task-events.jsonl \
+    -v "$PWD/results:/app/results" \
+    app python tests/multitenant_test.py \
+    --tenants 1 \
+    --users-per-tenant 1 \
+    --requests-per-user 1 \
+    --ticker AAPL \
+    --output /app/results/multitenant-smoke.json
+```
+
+Inspect the RAG task:
+
+```bash
+jq '.tasks[] | select(.task == "RAG Analysis")' \
+  results/task-resources.json
+```
+
+The report contains wall time, application CPU time, local Ollama CPU time,
+host CPU capacity, GPU active time, average GPU utilization, peak GPU memory,
+and sample coverage for every node. With concurrent users, overlapping nodes
+share Ollama and GPU measurements; use one concurrent user for clean per-task
+attribution.
+
 ### What `-f` means
 
 `-f` means `--file`; it selects the Compose file to use:
@@ -181,6 +222,16 @@ networking, each replica needs a unique Streamlit listen port or a reverse
 proxy. For true tenant isolation, use a separate FAISS vector-store directory
 or volume per tenant. The default shared `/app/data/vector_store` path is
 appropriate for a demo, not isolated tenant data.
+
+Select two GPUs for local Ollama with:
+
+```bash
+sudo scripts/switch-ollama-device.sh gpu 0,1
+```
+
+For an explicit multi-GPU list, the script sets `CUDA_VISIBLE_DEVICES`, enables
+`OLLAMA_SCHED_SPREAD`, and configures one `OLLAMA_NUM_PARALLEL` slot per selected
+GPU. Running `gpu` without a device list retains Ollama's automatic scheduling.
 
 ### Troubleshooting
 
