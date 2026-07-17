@@ -10,13 +10,8 @@ This demonstrates:
 from typing import Dict, Any, List, Optional, TypedDict, Annotated, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-import json
 import operator
-import os
-from pathlib import Path
-import threading
 import time
-import uuid
 
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
@@ -25,34 +20,6 @@ from langchain_ollama import OllamaLLM as Ollama
 from src.react_agent import ReActAgent
 from src.rag_engine import RAGEngine
 from src.tool_system import ToolRegistry, StockDataTool, CalculatorTool, WebSearchTool
-
-
-_RESOURCE_TRACE_LOCK = threading.Lock()
-
-
-def _emit_resource_trace_event(event: Dict[str, Any]) -> None:
-    """Append an opt-in node boundary event for the host resource monitor."""
-    trace_file = os.getenv("RESOURCE_TRACE_FILE")
-    if not trace_file:
-        return
-
-    payload = {
-        **event,
-        "timestamp_ns": time.time_ns(),
-        "process_id": os.getpid(),
-        "thread_id": threading.get_native_id(),
-    }
-    path = Path(trace_file)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(payload, separators=(",", ":")) + "\n"
-        with _RESOURCE_TRACE_LOCK:
-            with path.open("a", encoding="utf-8") as stream:
-                stream.write(line)
-                stream.flush()
-    except OSError:
-        # Resource telemetry must never break the financial workflow.
-        return
 
 # Define the agent state using TypedDict
 class AgentState(TypedDict):
@@ -486,16 +453,6 @@ class FinancialAgentWorkflow:
             started = time.perf_counter()
             metrics = state.setdefault("performance_metrics", {})
             node_metrics = metrics.setdefault("nodes", [])
-            trace_id = metrics.setdefault("trace_id", uuid.uuid4().hex)
-            task_id = uuid.uuid4().hex
-            label = self.NODE_LABELS.get(node_name, node_name)
-            _emit_resource_trace_event({
-                "phase": "start",
-                "trace_id": trace_id,
-                "task_id": task_id,
-                "node": node_name,
-                "label": label,
-            })
 
             try:
                 result = node_func(state)
@@ -509,21 +466,13 @@ class FinancialAgentWorkflow:
                 duration_ms = (time.perf_counter() - started) * 1000
                 node_metrics.append({
                     "node": node_name,
-                    "label": label,
+                    "label": self.NODE_LABELS.get(node_name, node_name),
                     "duration_ms": round(duration_ms, 2),
                     "status": status,
                     "mode": "fast" if self.fast_mode else "full",
                     "documents": len(state.get("retrieved_documents", [])),
                     "reasoning_steps": len(state.get("reasoning_trace", [])),
                     "error": state.get("error"),
-                })
-                _emit_resource_trace_event({
-                    "phase": "end",
-                    "trace_id": trace_id,
-                    "task_id": task_id,
-                    "node": node_name,
-                    "label": label,
-                    "status": status,
                 })
 
         return wrapper
