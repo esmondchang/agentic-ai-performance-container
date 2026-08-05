@@ -3,6 +3,10 @@ services:
     build: .
     image: agentic-ai-tutorial:local
     network_mode: host
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     environment:
       OLLAMA_BASE_URL: http://127.0.0.1:11434
       REASONING_MODEL: ${REASONING_MODEL:-llama3.2:latest}

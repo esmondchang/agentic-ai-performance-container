@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 import os
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,11 +39,14 @@ class RAGEngine:
     - Augmented generation
     """
 
+    _store_locks: Dict[str, threading.RLock] = {}
+    _store_locks_guard = threading.Lock()
+
     def __init__(self,
-                 embedding_model: str = "nomic-embed-text:latest",
-                 llm_model: str = "llama3.2:latest",
-                 vector_store_type: str = "chroma",
-                 persist_directory: str = "./data/vector_store",
+                 embedding_model: Optional[str] = None,
+                 llm_model: Optional[str] = None,
+                 vector_store_type: Optional[str] = None,
+                 persist_directory: Optional[str] = None,
                  chunk_size: int = 512,
                  chunk_overlap: int = 50):
         """Initialize RAG engine
@@ -59,6 +63,11 @@ class RAGEngine:
             from src.config import config
         except ModuleNotFoundError:
             from config import config
+
+        embedding_model = embedding_model or config.embedding_model
+        llm_model = llm_model or config.reasoning_model
+        vector_store_type = vector_store_type or config.vector_store_type
+        persist_directory = persist_directory or config.persist_directory
 
         # Initialize embeddings
         self.embeddings = OllamaEmbeddings(
@@ -84,6 +93,12 @@ class RAGEngine:
         # Initialize vector store
         self.vector_store_type = vector_store_type
         self.persist_directory = persist_directory
+        resolved_store = str(Path(self.persist_directory).resolve())
+        with self._store_locks_guard:
+            self._store_lock = self._store_locks.setdefault(
+                resolved_store,
+                threading.RLock(),
+            )
         self.vector_store = self._initialize_vector_store()
 
         # Document sources registry
@@ -103,13 +118,14 @@ class RAGEngine:
         from langchain_community.vectorstores import FAISS
 
         index_path = os.path.join(self.persist_directory, "faiss_index")
-        if os.path.exists(index_path):
-            try:
-                return FAISS.load_local(index_path, self.embeddings, allow_dangerous_deserialization=True)
-            except:
-                # Create new if loading fails
-                return FAISS.from_texts(["init"], self.embeddings)
-        else:
+        with self._store_lock:
+            if os.path.exists(index_path):
+                try:
+                    return FAISS.load_local(index_path, self.embeddings, allow_dangerous_deserialization=True)
+                except Exception:
+                    # Create new if loading fails
+                    return FAISS.from_texts(["init"], self.embeddings)
+
             # Create empty FAISS index
             return FAISS.from_texts(["init"], self.embeddings)
 
@@ -148,7 +164,8 @@ class RAGEngine:
         """Persist FAISS index if persistence is enabled."""
         if self.persist_directory:
             index_path = os.path.join(self.persist_directory, "faiss_index")
-            self.vector_store.save_local(index_path)
+            with self._store_lock:
+                self.vector_store.save_local(index_path)
 
     def add_documents(self, documents: List[Dict[str, Any]], source_type: str = "general"):
         """Add documents to the RAG system.
